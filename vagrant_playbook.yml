@@ -1,0 +1,101 @@
+---
+## Machine(s) to target
+- hosts: all
+  ## Activate privilege escalation
+  become: yes
+  ## Privilege escalation tool
+  become_method: sudo
+
+  vars:
+    document_root: /var/www/html
+
+  ## Reusable groups of tasks, handlers, files, etc
+  roles:
+    ## Install NGINX using defaults; see ./requirements.yml
+    - role: nginxinc.nginx
+
+  ## Tasks to be executed in order, one at a time
+  tasks:
+  - name: Update apt cache
+    apt:
+      update_cache: yes
+      # Allow cache to be stale up to 24 hours
+      cache_valid_time: 86400
+
+  ## Omit in favor of nginxinc.nginx role
+  # - name: Install nginx
+  #   apt:
+  #     name: nginx
+  #     state: latest
+
+  ## Require additional PHP packages? Add to `with_items`
+  - name: PHP Installation
+    apt:
+      ## Loop using entries from `with_items`
+      name: "{{ item }}"
+      state: latest
+    ## Note this is not in the `apt` block
+    with_items:
+      - php-fpm
+
+  - name: MySQL Installation
+    apt:
+      name: "{{ item }}"
+      state: latest
+    with_items:
+      - mysql-server
+      - python3-mysqldb
+
+  ## https://docs.ansible.com/ansible/latest/mysql_user_module.html
+  - name: MySQL Configuration
+    mysql_user:
+      name: vagrant
+      password: secret
+      ## Wildcard host to allow Vagrant host to connect remotely
+      host: "%"
+      priv: "*.*:ALL,GRANT"
+      state: present
+
+  - name: MySQL bind adddress change
+    replace:
+      path: /etc/mysql/mysql.conf.d/mysqld.cnf
+      ## Single quotes do not require escape sequence for slashes
+      regexp: '^bind-address(\s+.*)?=.*'
+      replace: 'bind-address\1= 0.0.0.0'
+      backup: yes
+    ## For bind-address to take effect
+    notify: restart mysql
+
+  - name: Create document root "{{ document_root }}" for NGINX
+    file:
+      path: "{{ document_root }}"
+      owner: nginx
+      group: www-data
+      state: directory
+      mode: 0755
+
+  ## nginx role does not provide means to set server document root
+  - name: NGINX config voodoo
+    replace:
+      path: /etc/nginx/conf.d/default.conf
+      ## Single quotes for do not require escaping for slashes
+      regexp: '^(\s*)root(\s+.*)?'
+      replace: '\1root {{ document_root }};'
+      ## Create backup in path in case something goes awry
+      backup: yes
+    ## Reload NGINX to adopt config changes
+    ## Handler provided by nginxinc.nginx role
+    ## Quotes required as handler name includes colon
+    notify: "(Handler: All OSs) Reload NGINX"
+
+  - name: Copy sample index.html
+    copy:
+      src: files/index.html
+      dest: "{{ document_root }}/index.html"
+      owner: nginx
+      group: www-data
+      mode: 0644
+
+  handlers:
+    - name: restart mysql
+      service: name=mysql state=restarted

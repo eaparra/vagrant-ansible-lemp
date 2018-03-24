@@ -1,0 +1,3 @@
+---
+# Source latest Unified Ansible Role for NGINX (Plus) from Ansible Galaxy
+- src: nginxinc.nginx
